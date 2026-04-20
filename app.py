@@ -13,32 +13,56 @@ def get_supabase_client():
 
 supabase = get_supabase_client()
 
-# ================= UI CONFIGURATION =================
+# ================= UI & CSS (FOR SCREENSHOT LOOK) =================
 st.set_page_config(page_title="Smart Scheduler PRO", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #f8f9fa; }
+    /* Main Background */
+    .stApp { background-color: #f0f2f5; }
+    
+    /* Header Styles */
+    .table-header {
+        padding: 10px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+        margin-bottom: 0px;
+    }
+    
+    /* Force Horizontal Columns even on Mobile */
+    [data-testid="column"] {
+        min-width: 300px !important;
+    }
+    
+    /* Task Card Look */
     .task-card {
         background-color: white;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid;
-        margin-bottom: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        font-family: 'Segoe UI', sans-serif;
     }
-    .overdue { border-left-color: #dc3545; }
-    .upcoming { border-left-color: #28a745; }
-    .stButton>button { width: 100%; border-radius: 8px; }
+    
+    .status-upcoming { color: #28a745; font-weight: bold; font-size: 0.8rem; }
+    .status-overdue { color: #dc3545; font-weight: bold; font-size: 0.8rem; }
+    
+    /* Button Styling */
+    .stButton>button {
+        border-radius: 4px;
+        height: 25px;
+        line-height: 10px;
+        font-size: 0.7rem;
+        margin-top: 5px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# ================= SESSION STATE (For Editing) =================
+# ================= SESSION STATE =================
 if 'editing_task' not in st.session_state:
     st.session_state.editing_task = None
 
-# ================= LOGIC FUNCTIONS =================
-
+# ================= FUNCTIONS =================
 def fetch_tasks():
     try:
         res = supabase.table("scheduler_tasks").select("*").order("task_time").execute()
@@ -46,108 +70,106 @@ def fetch_tasks():
     except: return []
 
 def save_task(name, cat, dt, notes, task_id=None):
-    data = {
-        "name": str(name),
-        "category": str(cat),
-        "task_time": dt.isoformat(),
-        "notes": str(notes) if notes else "",
-        "is_archived": False
-    }
-    try:
-        if task_id:
-            supabase.table("scheduler_tasks").update(data).eq("id", task_id).execute()
-        else:
-            supabase.table("scheduler_tasks").insert(data).execute()
-        return True
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
+    data = {"name": str(name), "category": str(cat), "task_time": dt.isoformat(), "notes": str(notes), "is_archived": False}
+    if task_id: supabase.table("scheduler_tasks").update(data).eq("id", task_id).execute()
+    else: supabase.table("scheduler_tasks").insert(data).execute()
 
 # ================= APP UI =================
+st.title("📊 Smart Scheduler PRO")
 
-st.title("📱 Smart Scheduler PRO")
-
-# --- Input/Edit Form ---
-# Agar koi task edit ho raha hai, toh form expanded khulega
-is_editing = st.session_state.editing_task is not None
-with st.expander("📝 " + ("Edit Task" if is_editing else "Add New Task"), expanded=is_editing):
-    with st.form("main_form", clear_on_submit=not is_editing):
-        # Default values set karna agar edit mode hai
-        d_name = st.session_state.editing_task['name'] if is_editing else ""
-        d_cat = st.session_state.editing_task['category'] if is_editing else "Visit"
-        d_notes = st.session_state.editing_task['notes'] if is_editing else ""
-        # Time parsing for edit
-        if is_editing:
-            dt_obj = pd.to_datetime(st.session_state.editing_task['task_time'])
-            d_date = dt_obj.date()
-            d_time = dt_obj.time()
-        else:
-            d_date = datetime.now()
-            d_time = (datetime.now() + timedelta(hours=1)).time()
-
-        t_name = st.text_input("Task / Client Name", value=d_name)
-        t_cat = st.selectbox("Category", ["Visit", "Pending Order", "Other"], index=["Visit", "Pending Order", "Other"].index(d_cat))
-        col1, col2 = st.columns(2)
-        t_date = col1.date_input("Date", d_date)
-        t_time = col2.time_input("Time", d_time)
-        t_notes = st.text_area("Notes", value=d_notes)
-        
-        btn_label = "Update Task" if is_editing else "Add Task"
-        if st.form_submit_button(btn_label):
-            dt_combined = datetime.combine(t_date, t_time)
-            tid = st.session_state.editing_task['id'] if is_editing else None
-            if save_task(t_name, t_cat, dt_combined, t_notes, tid):
-                st.session_state.editing_task = None # Reset edit mode
-                st.success("Success!")
+# --- Top Input Form (Screenshot jaisa compact) ---
+is_edit = st.session_state.editing_task is not None
+with st.container():
+    with st.expander("➕ " + ("Edit Task" if is_edit else "Add New Entry"), expanded=is_edit):
+        with st.form("input_form"):
+            col1, col2, col3, col4 = st.columns([2, 1, 1, 2])
+            
+            d = st.session_state.editing_task if is_edit else {}
+            
+            t_name = col1.text_input("Name", value=d.get('name', ""))
+            t_cat = col2.selectbox("Category", ["Visit", "Pending Order", "Other"], 
+                                   index=["Visit", "Pending Order", "Other"].index(d.get('category', 'Visit')))
+            
+            if is_edit:
+                dt_obj = pd.to_datetime(d['task_time'])
+                d_val, t_val = dt_obj.date(), dt_obj.time()
+            else:
+                d_val, t_val = datetime.now().date(), (datetime.now() + timedelta(hours=1)).time()
+                
+            t_date = col3.date_input("Date", d_val)
+            t_time = col3.time_input("Time", t_val)
+            t_notes = col4.text_input("Notes / Remarks", value=d.get('notes', ""))
+            
+            sub_col1, sub_col2 = st.columns([1, 5])
+            if sub_col1.form_submit_button("Save"):
+                dt_c = datetime.combine(t_date, t_time)
+                save_task(t_name, t_cat, dt_c, t_notes, d.get('id'))
+                st.session_state.editing_task = None
                 st.rerun()
+            if is_edit:
+                if sub_col2.form_submit_button("Cancel"):
+                    st.session_state.editing_task = None
+                    st.rerun()
 
-    if is_editing:
-        if st.button("Cancel Edit"):
-            st.session_state.editing_task = None
-            st.rerun()
-
-# --- Load & Display Data ---
+# --- Main Dashboard (3 Columns like Screenshot) ---
 data = fetch_tasks()
 df = pd.DataFrame(data)
 
 if not df.empty:
     df['task_time'] = pd.to_datetime(df['task_time'])
     now = datetime.now(df['task_time'].dt.tz)
-    tab1, tab2 = st.tabs(["📋 Dashboard", "📦 Archive"])
+    
+    # 3 main columns set karna
+    dashboard_cols = st.columns(3)
+    cats = [("Visit", "#28a745"), ("Pending Order", "#dc3545"), ("Other", "#007bff")]
 
-    with tab1:
-        cols = st.columns(3)
-        cats = ["Visit", "Pending Order", "Other"]
-        for i, cat in enumerate(cats):
-            with cols[i]:
-                st.subheader(cat)
-                active = df[(df['category'] == cat) & (df['is_archived'] == False)]
-                for _, row in active.iterrows():
-                    is_overdue = row['task_time'] < now
-                    s_class = "overdue" if is_overdue else "upcoming"
-                    
-                    st.markdown(f"""<div class="task-card {s_class}">
-                        <strong>{row['name']}</strong><br>
-                        <small>⏰ {row['task_time'].strftime('%d %b, %I:%M %p')}</small><br>
-                        <small style="font-style: italic;">{row['notes'] if row['notes'] else ''}</small>
-                    </div>""", unsafe_allow_html=True)
-                    
-                    c1, c2 = st.columns(2)
-                    if c1.button("Edit", key=f"edit_{row['id']}"):
-                        st.session_state.editing_task = row.to_dict()
-                        st.rerun()
-                    if c2.button("Done", key=f"done_{row['id']}"):
-                        supabase.table("scheduler_tasks").update({"is_archived": True, "archived_on": datetime.now().strftime("%d-%m %H:%M")}).eq("id", row['id']).execute()
-                        st.rerun()
-                    st.write("---")
-
-    with tab2:
-        archived = df[df['is_archived'] == True]
-        for _, row in archived.iterrows():
-            with st.container(border=True):
-                st.write(f"**{row['name']}** ({row['category']})")
-                if st.button("Restore", key=f"res_{row['id']}"):
-                    supabase.table("scheduler_tasks").update({"is_archived": False, "archived_on": None}).eq("id", row['id']).execute()
+    for i, (cat_name, cat_color) in enumerate(cats):
+        with dashboard_cols[i]:
+            # Table Header
+            st.markdown(f'<div class="table-header" style="background-color:{cat_color}">{cat_name}</div>', unsafe_allow_html=True)
+            
+            active = df[(df['category'] == cat_name) & (df['is_archived'] == False)]
+            
+            if active.empty:
+                st.markdown('<div class="task-card" style="text-align:center; color:#999;">No tasks</div>', unsafe_allow_html=True)
+            
+            for _, row in active.iterrows():
+                overdue = row['task_time'] < now
+                st_text = "OVERDUE" if overdue else "UPCOMING"
+                st_class = "status-overdue" if overdue else "status-upcoming"
+                
+                # Task Card Body
+                st.markdown(f"""
+                <div class="task-card">
+                    <div style="display:flex; justify-content:space-between;">
+                        <b>{row['name']}</b>
+                        <span class="{st_class}">{st_text}</span>
+                    </div>
+                    <div style="font-size:0.8rem; color:#666;">
+                        📅 {row['task_time'].strftime('%d-%m-%y')} | ⏰ {row['task_time'].strftime('%H:%M')}
+                    </div>
+                    <div style="font-size:0.75rem; color:#888; margin-top:3px;"><i>{row['notes']}</i></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Buttons niche
+                btn_c1, btn_c2 = st.columns(2)
+                if btn_c1.button("Edit", key=f"e_{row['id']}"):
+                    st.session_state.editing_task = row.to_dict()
                     st.rerun()
+                if btn_c2.button("Archive", key=f"a_{row['id']}"):
+                    supabase.table("scheduler_tasks").update({"is_archived": True, "archived_on": datetime.now().strftime("%d-%m %H:%M")}).eq("id", row['id']).execute()
+                    st.rerun()
+
+    # --- Archive Section at Bottom ---
+    st.markdown("---")
+    with st.expander("📦 Archived Tasks Records"):
+        archived = df[df['is_archived'] == True]
+        if not archived.empty:
+            st.table(archived[['name', 'category', 'task_time', 'notes', 'archived_on']])
+            if st.button("Restore Selected (Click row ID)"):
+                st.info("Feature: Use Database to restore directly")
+        else:
+            st.write("Archive khali hai.")
 else:
-    st.info("No tasks yet.")
+    st.info("No data available.")
