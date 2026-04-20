@@ -40,19 +40,28 @@ if 'editing_task' not in st.session_state:
 def fetch_tasks():
     try:
         res = supabase.table("scheduler_tasks").select("*").order("task_time").execute()
-        return res.data
+        raw_data = res.data
+        
+        # Manual Time Conversion (Error Proof)
+        for item in raw_data:
+            try:
+                # String ko datetime mein badalna aur IST ensure karna
+                dt_str = item['task_time'].replace('Z', '+00:00')
+                dt_obj = datetime.fromisoformat(dt_str)
+                if dt_obj.tzinfo is None:
+                    dt_obj = pytz.utc.localize(dt_obj)
+                item['task_time_dt'] = dt_obj.astimezone(IST)
+            except:
+                item['task_time_dt'] = datetime.now(IST) # Fallback
+        return raw_data
     except: return []
 
 def save_task(name, cat, dt, notes, task_id=None):
-    # Ensure dt has timezone info
     if dt.tzinfo is None:
         dt = IST.localize(dt)
-    
     data = {"name": str(name), "category": str(cat), "task_time": dt.isoformat(), "notes": str(notes), "is_archived": False}
-    if task_id: 
-        supabase.table("scheduler_tasks").update(data).eq("id", task_id).execute()
-    else: 
-        supabase.table("scheduler_tasks").insert(data).execute()
+    if task_id: supabase.table("scheduler_tasks").update(data).eq("id", task_id).execute()
+    else: supabase.table("scheduler_tasks").insert(data).execute()
 
 # ================= APP UI =================
 st.title("📊 Smart Scheduler PRO")
@@ -71,9 +80,7 @@ with st.container():
                                    index=["Visit", "Pending Order", "Other"].index(d.get('category', 'Visit')))
             
             if is_edit:
-                dt_obj = pd.to_datetime(d['task_time'])
-                if dt_obj.tzinfo is None: dt_obj = pytz.utc.localize(dt_obj).astimezone(IST)
-                else: dt_obj = dt_obj.astimezone(IST)
+                dt_obj = d['task_time_dt']
                 d_val, t_val = dt_obj.date(), dt_obj.time()
             else:
                 d_val, t_val = now_ist.date(), (now_ist + timedelta(hours=1)).time()
@@ -94,54 +101,52 @@ with st.container():
 
 # --- Dashboard ---
 data = fetch_tasks()
-df = pd.DataFrame(data)
 
-if not df.empty:
-    # TIMEZONE FIX: Handle naive and aware datetimes
-    df['task_time'] = pd.to_datetime(df['task_time'], utc=True).dt.tz_convert('Asia/Kolkata')
-    
+if data:
     dashboard_cols = st.columns(3)
     cats = [("Visit", "#28a745"), ("Pending Order", "#dc3545"), ("Other", "#007bff")]
 
     for i, (cat_name, cat_color) in enumerate(cats):
         with dashboard_cols[i]:
             st.markdown(f'<div class="table-header" style="background-color:{cat_color}">{cat_name}</div>', unsafe_allow_html=True)
-            active = df[(df['category'] == cat_name) & (df['is_archived'] == False)]
             
-            for _, row in active.iterrows():
-                overdue = row['task_time'] < now_ist
+            # Filter active tasks for this category
+            active = [t for t in data if t['category'] == cat_name and not t['is_archived']]
+            
+            for row in active:
+                overdue = row['task_time_dt'] < now_ist
                 st_text = "OVERDUE" if overdue else "UPCOMING"
                 st_class = "status-overdue" if overdue else "status-upcoming"
                 
                 st.markdown(f"""
                 <div class="task-card">
                     <div style="display:flex; justify-content:space-between;"><b>{row['name']}</b><span class="{st_class}">{st_text}</span></div>
-                    <div style="font-size:0.8rem; color:#666;">📅 {row['task_time'].strftime('%d-%m-%y')} | ⏰ {row['task_time'].strftime('%H:%M')}</div>
+                    <div style="font-size:0.8rem; color:#666;">📅 {row['task_time_dt'].strftime('%d-%m-%y')} | ⏰ {row['task_time_dt'].strftime('%H:%M')}</div>
                     <div style="font-size:0.75rem; color:#888;">{row['notes']}</div>
                 </div>
                 """, unsafe_allow_html=True)
                 
                 c1, c2 = st.columns(2)
                 if c1.button("Edit", key=f"e_{row['id']}"):
-                    st.session_state.editing_task = row.to_dict()
+                    st.session_state.editing_task = row
                     st.rerun()
                 if c2.button("Archive", key=f"a_{row['id']}"):
                     supabase.table("scheduler_tasks").update({"is_archived": True, "archived_on": now_ist.strftime("%d-%m %H:%M")}).eq("id", row['id']).execute()
                     st.rerun()
 
-    # --- Archive Section (Fixed & Responsive) ---
+    # --- Archive Section ---
     st.markdown("---")
     st.subheader("📦 Archive Records")
-    archived = df[df['is_archived'] == True]
+    archived = [t for t in data if t['is_archived']]
     
-    if not archived.empty:
-        for _, row in archived.iterrows():
+    if archived:
+        for row in archived:
             with st.container():
                 ca1, ca2 = st.columns([5, 1])
                 ca1.markdown(f"""
                 <div class="archive-item">
                     <strong>{row['name']}</strong> | {row['category']}<br>
-                    <small>Set for: {row['task_time'].strftime('%d-%m %H:%M')} | Archived: {row['archived_on']}</small>
+                    <small>Set for: {row['task_time_dt'].strftime('%d-%m %H:%M')} | Archived: {row['archived_on']}</small>
                 </div>
                 """, unsafe_allow_html=True)
                 if ca2.button("Restore", key=f"res_{row['id']}"):
